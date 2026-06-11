@@ -1,10 +1,9 @@
-from http import client
+import asyncio
 import os
-from google.adk.agents.llm_agent import Agent
-from google.adk.tools import google_search
+from google.adk.agents import Agent
+from google.adk.tools import AgentTool, google_search
 import smtplib
 import sqlite3
-import json
 from email.message import EmailMessage
 
 def send_email(to: str, title: str, message: str) -> str:
@@ -26,15 +25,6 @@ def send_email(to: str, title: str, message: str) -> str:
             return f"Email sent to {to} with title '{title}'"
     except Exception as e:
         return f"Failed to send email: {str(e)}"
-    # database start -------
-def init_db():
-    conn = sqlite3.connect('hackathon.db')
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS teams 
-                 (name TEXT, project TEXT, status TEXT)''')
-    conn.commit()
-    conn.close()
-init_db()
 
 def Save_info(team_name: str, project: str, status: str) -> str:
     """You are a hackathon assistant. When a user asks about a team, always use the tool Save_info to get correct information."""
@@ -49,11 +39,50 @@ def Save_info(team_name: str, project: str, status: str) -> str:
     except Exception as e:
         return f"Failed to save information: {str(e)}" 
 
-root_agent = Agent(
+db_agent = Agent(
     model='gemini-2.5-flash',
-    name='root_agent',
-    description='A helpful assistant for user questions.',
+    name='db_agent',
+    description='A helpful assistant for managing hackathon team information.',
     instruction='Answer user questions to the best of your functions ability.',
     tools=[Save_info, send_email],
 )
 
+research_agent = Agent(
+    model='gemini-2.5-flash',
+    name='research_specialist',
+    instruction="You are an expert at finding information on the web. Use google_search to answer questions.",
+    tools=[google_search]
+)
+
+root_agent = Agent(
+    model='gemini-2.5-flash',
+    name='orchestrator',
+    instruction="""You are the leader of a team of agents. 
+    1. If the user wants to save or view information about a team, send it to the database_specialist.
+    2. If the user wants to know something about the world, send it to the research_specialist.
+    Do not try to solve tasks yourself if you have a specialist available.""",
+    tools=[
+        AgentTool(db_agent), 
+        AgentTool(research_agent)
+    ]
+)
+
+async def main():
+    # init db
+    with sqlite3.connect('hackathon.db') as conn:
+        conn.execute('CREATE TABLE IF NOT EXISTS teams (name TEXT PRIMARY KEY, project TEXT, status TEXT)')
+    
+    print("Agent team initialized. Type 'exit' to quit.")
+    
+    while True:
+        user_input = input("\n🗣️ You: ")
+        if user_input.lower() in ['exit', 'quit']:
+            break
+        
+        # AWAIT is here - allows agents to work in the background while waiting for the response.
+        print("🧠 Thinking...")
+        response = await root_agent.run(user_input) 
+        print(f"🤖 Agent: {response}")
+
+if __name__ == "__main__":
+    asyncio.run(main()) # Starts directly the main function when the script is running.
